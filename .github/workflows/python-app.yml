@@ -1,0 +1,61 @@
+# PayloadGuard — Destructive merge detection
+# Only runs on PRs to main (not pushes), to catch destructive changes before merge.
+
+name: PayloadGuard
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: "Payload Consequence Analysis"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install GitPython
+        run: pip install GitPython==3.1.40
+
+      - name: Run PayloadGuard analysis
+        run: |
+          echo "Analyzing PR branch against main..."
+          python -c "
+          import git, json, sys
+          repo = git.Repo('.')
+          # Compare HEAD (PR branch) against the merge base with main
+          target = repo.commit('origin/main')
+          head = repo.commit('HEAD')
+          merge_base = repo.merge_base(target, head)
+          if not merge_base:
+              print('No common ancestor found')
+              sys.exit(0)
+          diffs = merge_base[0].diff(head)
+          deleted = [d.a_path for d in diffs if d.change_type == 'D']
+          added = [d for d in diffs if d.change_type == 'A']
+          modified = [d for d in diffs if d.change_type == 'M']
+          total = len(deleted) + len(added) + len(modified)
+          print(f'Files: +{len(added)} -{len(deleted)} ~{len(modified)} ({total} total)')
+          if len(deleted) > 50:
+              print(f'DESTRUCTIVE: {len(deleted)} files would be deleted')
+              sys.exit(2)
+          if len(deleted) > 20:
+              print(f'CAUTION: {len(deleted)} files would be deleted')
+          if deleted:
+              print('Deleted files:')
+              for f in deleted[:20]:
+                  print(f'  - {f}')
+          print('Analysis complete.')
+          "
+
